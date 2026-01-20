@@ -8,6 +8,9 @@
     },
     {
       "path": "./apps/sharding-plugin"
+    },
+    {
+      "path": "./libs/jest-sharded-plugin"
     }
   ]
 }

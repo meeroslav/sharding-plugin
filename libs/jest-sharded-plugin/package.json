@@ -1,0 +1,62 @@
+{
+  "name": "@sharding-plugin/jest-sharded-plugin",
+  "version": "0.0.1",
+  "private": true,
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    "./package.json": "./package.json",
+    "./plugin": {
+      "types": "./src/plugins/plugin.ts",
+      "import": "./src/plugins/plugin.ts",
+      "default": "./src/plugins/plugin.ts"
+    },
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "nx": {
+    "targets": {
+      "build": {
+        "executor": "@nx/js:tsc",
+        "outputs": [
+          "{options.outputPath}"
+        ],
+        "options": {
+          "outputPath": "libs/jest-sharded-plugin/dist",
+          "main": "libs/jest-sharded-plugin/src/index.ts",
+          "tsConfig": "libs/jest-sharded-plugin/tsconfig.lib.json",
+          "rootDir": "libs/jest-sharded-plugin/src",
+          "generatePackageJson": false,
+          "assets": [
+            {
+              "input": "./libs/jest-sharded-plugin/src",
+              "glob": "**/!(*.ts)",
+              "output": "."
+            },
+            {
+              "input": "./libs/jest-sharded-plugin/src",
+              "glob": "**/*.d.ts",
+              "output": "."
+            }
+          ]
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "tslib": "^2.3.0",
+    "@nx/devkit": "20.8.4",
+    "minimatch": "9.0.3",
+    "nx": "20.8.4",
+    "jest-config": "29.7.0",
+    "jest-runtime": "29.7.0",
+    "jest": "^29.7.0",
+    "jest-resolve": "29.7.0",
+    "semver": "7.6.3"
+  }
+}

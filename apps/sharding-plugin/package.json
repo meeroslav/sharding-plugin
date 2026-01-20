@@ -39,11 +39,6 @@
             "buildTarget": "sharding-plugin:build:production"
           }
         }
-      },
-      "test": {
-        "options": {
-          "passWithNoTests": true
-        }
       }
     }
   }
