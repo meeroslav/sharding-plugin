@@ -1,0 +1,26 @@
+{
+  "name": "@sharding-plugin/sharding-plugin-e2e",
+  "version": "0.0.1",
+  "private": true,
+  "nx": {
+    "name": "sharding-plugin-e2e",
+    "implicitDependencies": [
+      "sharding-plugin"
+    ],
+    "targets": {
+      "e2e": {
+        "executor": "@nx/jest:jest",
+        "outputs": [
+          "{projectRoot}/test-output/jest/coverage"
+        ],
+        "options": {
+          "jestConfig": "apps/sharding-plugin-e2e/jest.config.ts",
+          "passWithNoTests": true
+        },
+        "dependsOn": [
+          "sharding-plugin:build"
+        ]
+      }
+    }
+  }
+}
