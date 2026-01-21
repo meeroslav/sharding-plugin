@@ -65,7 +65,20 @@
   ],
   "targetDefaults": {
     "test": {
+      "cache": true,
       "dependsOn": ["^build"]
+    },
+    "lint": {
+      "cache": true
+    },
+    "test-sharded": {
+      "cache": true
+    },
+    "test-sharded--**": {
+      "cache": true
+    },
+    "build": {
+      "cache": true
     },
     "@nx/js:tsc": {
       "cache": true,
