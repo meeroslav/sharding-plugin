@@ -303,7 +303,7 @@ async function buildJestTargets(
           const targetName = `${options.ciTargetName}--shard${index + 1}`;
           dependsOn.push(targetName);
           targets[targetName] = {
-            command: `jest --runTestsByPath ${shard.join(',')}`,
+            command: `jest --runTestsByPath ${shard.join(' ')}`,
             cache,
             inputs,
             outputs,
