@@ -56,7 +56,9 @@
       "plugin": "@sharding-plugin/jest-sharded-plugin/plugin",
       "options": {
         "targetName": "test",
-        "ciTargetName": "test-sharded"
+        "ciTargetName": "test-sharded",
+        "shardingLimit": 10,
+        "maxShards": 10
       },
       "exclude": ["apps/sharding-plugin-e2e/**/*"]
     }
