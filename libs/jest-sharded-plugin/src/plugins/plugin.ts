@@ -39,9 +39,17 @@ export interface JestPluginOptions {
   ciTargetName?: string;
 
   /**
-   * The name that should be used to group atomized tasks on CI
+   * The name that should be used to group sharded tasks on CI
    */
   ciGroupName?: string;
+  /**
+   * The number of files to start sharding after.
+   */
+  shardingLimit?: number;
+  /**
+   * The maximal number of shards to create.
+   */
+  maxShards?: number;
   /**
    *  Whether to use jest-config and jest-runtime are used to load Jest configuration and context.
    *  Disabling this is much faster but could be less correct since we are using our own config loader
@@ -51,6 +59,8 @@ export interface JestPluginOptions {
 }
 type JestPluginOptionsNormalized = JestPluginOptions & {
   targetName: string;
+  shardingLimit: number;
+  maxShards: number;
 };
 
 type JestTargets = Awaited<ReturnType<typeof buildJestTargets>>;
@@ -266,66 +276,96 @@ async function buildJestTargets(
         context,
         presetCache
       );
-      const targetGroup: string[] = [];
-      const dependsOn: string[] = [];
-      metadata = {
-        targetGroups: {
-          [groupName ?? '']: targetGroup,
-        },
-      };
 
       const specIgnoreRegexes: undefined | RegExp[] =
         rawConfig.testPathIgnorePatterns?.map(
           (p: string) => new RegExp(replaceRootDirInPath(projectRoot, p))
         );
+      const normalizedTestPaths = testPaths.map((path) => normalizePath(
+        relative(join(context.workspaceRoot, projectRoot), path)
+      ));
+      const filteredTestPaths = normalizedTestPaths.filter((path) => !specIgnoreRegexes?.some((regex) => regex.test(path)));
 
-      for (const testPath of testPaths) {
-        const relativePath = normalizePath(
-          relative(join(context.workspaceRoot, projectRoot), testPath)
-        );
+      if (filteredTestPaths.length > options.shardingLimit) {
+        // Sharding needed, create a target group for each shard.
+        const targetGroup: string[] = [];
+        const dependsOn: string[] = [];
+        metadata = {
+          targetGroups: {
+            [groupName ?? '']: targetGroup,
+          },
+        };
 
-        if (specIgnoreRegexes?.some((regex) => regex.test(relativePath))) {
-          continue;
+        const shards = getShards(filteredTestPaths, options);
+
+        for (const [index, shard] of shards.entries()) {
+
+          const targetName = `${options.ciTargetName}--shard${index + 1}`;
+          dependsOn.push(targetName);
+          targets[targetName] = {
+            command: `jest --runTestsByPath ${shard.join(',')}`,
+            cache,
+            inputs,
+            outputs,
+            options: {
+              cwd: projectRoot,
+              env: { TS_NODE_COMPILER_OPTIONS: tsNodeCompilerOptions },
+            },
+            metadata: {
+              technologies: ['jest'],
+              description: `Run Jest Tests in shard #${index + 1}`,
+              help: {
+                command: `${pmc.exec} jest --help`,
+                example: {
+                  options: {
+                    coverage: true,
+                  },
+                },
+              },
+            },
+          };
+          targetGroup.push(targetName);
         }
 
-        const targetName = `${options.ciTargetName}--${relativePath}`;
-        dependsOn.push(targetName);
-        targets[targetName] = {
-          command: `jest ${relativePath}`,
-          cache,
+        if (targetGroup.length > 0) {
+          targets[options.ciTargetName] = {
+            executor: 'nx:noop',
+            cache: true,
+            inputs,
+            outputs,
+            dependsOn,
+            metadata: {
+              technologies: ['jest'],
+              description: 'Run Jest Tests in CI',
+              nonAtomizedTarget: options.targetName,
+              help: {
+                command: `${pmc.exec} jest --help`,
+                example: {
+                  options: {
+                    coverage: true,
+                  },
+                },
+              },
+            },
+          };
+          targetGroup.unshift(options.ciTargetName);
+        }
+      } else {
+        // No sharding needed, run all tests in one target.
+        targets[options.ciTargetName] = {
+          command: 'jest',
+          cache: true,
           inputs,
           outputs,
           options: {
             cwd: projectRoot,
+            // Jest registers ts-node with module CJS https://github.com/SimenB/jest/blob/v29.6.4/packages/jest-config/src/readConfigFileAndSetRootDir.ts#L117-L119
+            // We want to support of ESM via 'module':'nodenext', we need to override the resolution until Jest supports it.
             env: { TS_NODE_COMPILER_OPTIONS: tsNodeCompilerOptions },
           },
           metadata: {
             technologies: ['jest'],
-            description: `Run Jest Tests in ${relativePath}`,
-            help: {
-              command: `${pmc.exec} jest --help`,
-              example: {
-                options: {
-                  coverage: true,
-                },
-              },
-            },
-          },
-        };
-        targetGroup.push(targetName);
-      }
-
-      if (targetGroup.length > 0) {
-        targets[options.ciTargetName] = {
-          executor: 'nx:noop',
-          cache: true,
-          inputs,
-          outputs,
-          dependsOn,
-          metadata: {
-            technologies: ['jest'],
             description: 'Run Jest Tests in CI',
-            nonAtomizedTarget: options.targetName,
             help: {
               command: `${pmc.exec} jest --help`,
               example: {
@@ -336,7 +376,6 @@ async function buildJestTargets(
             },
           },
         };
-        targetGroup.unshift(options.ciTargetName);
       }
     }
   } else {
@@ -459,6 +498,25 @@ async function buildJestTargets(
   }
 
   return { targets, metadata };
+}
+
+function getShards(testPaths: string[], options: JestPluginOptionsNormalized): string[][] {
+  const shards: string[][] = [];
+  // There are more files than the sharding limit. Let's split them into maxShards shards.
+  if (testPaths.length >= options.maxShards * options.shardingLimit) {
+    const maxShardSize = Math.ceil(testPaths.length / options.maxShards);
+    for (let i = 0; i < options.maxShards; i++) {
+      const shard = testPaths.slice(i * maxShardSize, (i + 1) * maxShardSize);
+      shards.push(shard);
+    }
+  } else {
+    // split paths into shards of options.shardingLimit size.
+    for (let i = 0; i < testPaths.length; i += options.shardingLimit) {
+      const shard = testPaths.slice(i, i + options.shardingLimit);
+      shards.push(shard);
+    }
+  }
+  return shards;
 }
 
 function getInputs(
@@ -593,6 +651,8 @@ function getOutputs(
 function normalizeOptions(options: JestPluginOptions): JestPluginOptionsNormalized {
   const result = options ?? {};
   result.targetName ??= 'test';
+  result.shardingLimit ??= 10;
+  result.maxShards ??= 10;
   return result as JestPluginOptionsNormalized;
 }
 

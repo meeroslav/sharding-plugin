@@ -53,16 +53,9 @@
       }
     },
     {
-      "plugin": "@nx/jest/plugin",
-      "options": {
-        "targetName": "test"
-      },
-      "exclude": ["apps/sharding-plugin-e2e/**/*"]
-    },
-    {
       "plugin": "@sharding-plugin/jest-sharded-plugin/plugin",
       "options": {
-        "targetName": "test-s",
+        "targetName": "test",
         "ciTargetName": "test-sharded"
       },
       "exclude": ["apps/sharding-plugin-e2e/**/*"]
