@@ -269,17 +269,22 @@ async function buildJestTargets(
     ));
 
     if (options?.ciTargetName) {
+      const configRootDir = getConfigRootDir(rawConfig, absConfigFilePath);
+
       const testPaths = await getTestPaths(
         projectRoot,
         rawConfig,
         absConfigFilePath,
+        configRootDir,
         context,
         presetCache
       );
 
+      // Jest uses global /<rootDir>/g replacement for ignore patterns.
+      // @see https://github.com/jestjs/jest/blob/v29.7.0/packages/jest-config/src/normalize.ts#L297-L298
       const specIgnoreRegexes: undefined | RegExp[] =
         rawConfig.testPathIgnorePatterns?.map(
-          (p: string) => new RegExp(replaceRootDirInPath(projectRoot, p))
+          (p: string) => new RegExp(p.replace(/<rootDir>/g, configRootDir))
         );
       const normalizedTestPaths = testPaths.map((path) => normalizePath(
         relative(join(context.workspaceRoot, projectRoot), path)
@@ -611,12 +616,42 @@ function resolvePresetInputWithJestResolver(
     : join('{projectRoot}', relativePath);
 }
 
-// Adapted from here https://github.com/jestjs/jest/blob/c13bca3/packages/jest-config/src/utils.ts#L57-L69
+// @see https://github.com/jestjs/jest/blob/v29.7.0/packages/jest-config/src/utils.ts#L57-L67
 function replaceRootDirInPath(rootDir: string, filePath: string): string {
   if (!filePath.startsWith('<rootDir>')) {
     return filePath;
   }
   return resolve(rootDir, normalize(`./${filePath.slice('<rootDir>'.length)}`));
+}
+
+/**
+ * Resolves the effective rootDir for a Jest configuration.
+ *
+ * Replicates Jest's readConfigFileAndSetRootDir behavior:
+ * @see https://github.com/jestjs/jest/blob/v29.7.0/packages/jest-config/src/readConfigFileAndSetRootDir.ts#L63-L78
+ *
+ * - If explicitly set as an absolute path, use it as-is.
+ * - If explicitly set as a relative path, resolve it relative to the config file's directory.
+ * - If not set, default to the config file's directory.
+ */
+export function getConfigRootDir(
+  rawConfig: any,
+  absConfigFilePath: string
+): string {
+  if (rawConfig.rootDir) {
+    return isAbsolute(rawConfig.rootDir)
+      ? rawConfig.rootDir
+      : resolve(dirname(absConfigFilePath), rawConfig.rootDir);
+  }
+  return dirname(absConfigFilePath);
+}
+
+/**
+ * Escapes glob special characters in a path, matching Jest's escapeGlobCharacters.
+ * @see https://github.com/jestjs/jest/blob/v29.7.0/packages/jest-config/src/utils.ts#L54-L55
+ */
+function escapeGlobCharacters(path: string): string {
+  return path.replace(/([[\]{}()*+?.\\^$|])/g, '\\$1');
 }
 
 function getOutputs(
@@ -700,6 +735,7 @@ async function getTestPaths(
   projectRoot: string,
   rawConfig: any,
   absConfigFilePath: string,
+  configRootDir: string,
   context: CreateNodesContext,
   presetCache: Record<string, unknown>
 ): Promise<string[]> {
@@ -710,6 +746,11 @@ async function getTestPaths(
     presetCache
   );
 
+  // Jest replaces <rootDir> in testMatch with an escaped rootDir to avoid glob
+  // interpretation of special chars in the path.
+  // @see https://github.com/jestjs/jest/blob/v29.7.0/packages/jest-config/src/normalize.ts#L769-L783
+  const escapedRootDir = escapeGlobCharacters(configRootDir);
+
   let paths = await globWithWorkspaceContext(
     context.workspaceRoot,
     (
@@ -718,7 +759,13 @@ async function getTestPaths(
         '**/__tests__/**/*.?([mc])[jt]s?(x)',
         '**/?(*.)+(spec|test).?([mc])[jt]s?(x)',
       ]
-    ).map((pattern) => join(projectRoot, pattern)),
+    ).map((pattern) => {
+      if (pattern.startsWith('<rootDir>')) {
+        const resolved = pattern.replace(/^<rootDir>/, escapedRootDir);
+        return relative(context.workspaceRoot, resolve(resolved));
+      }
+      return join(projectRoot, pattern);
+    }),
     []
   );
 
