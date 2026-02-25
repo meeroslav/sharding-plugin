@@ -26,7 +26,7 @@ import { hashObject } from 'nx/src/devkit-internals';
 import { getGlobPatternsFromPackageManagerWorkspaces } from 'nx/src/plugins/package-json';
 import { workspaceDataDirectory } from 'nx/src/utils/cache-directory';
 import { combineGlobPatterns } from 'nx/src/utils/globs';
-import { dirname, isAbsolute, join, relative, resolve } from 'path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'path';
 import { getInstalledJestMajorVersion } from '../utils/version-utils';
 import { globWithWorkspaceContext } from 'nx/src/utils/workspace-context';
 import { normalize } from 'node:path';
@@ -56,6 +56,13 @@ export interface JestPluginOptions {
    *  and test matcher instead of Jest's.
    */
   disableJestRuntime?: boolean;
+  /**
+   * The jest config filename to match (e.g., 'jest.config-app.js').
+   * When set, only config files with this exact basename are processed.
+   * When unset, only standard `jest.config.{ext}` files are matched.
+   * The `--config` flag is automatically added to jest commands when needed.
+   */
+  config?: string;
 }
 type JestPluginOptionsNormalized = JestPluginOptions & {
   targetName: string;
@@ -76,7 +83,21 @@ function writeTargetsToCache(
   writeJsonFile(cachePath, results);
 }
 
-const jestConfigGlob = '**/jest.config.{cjs,mjs,js,cts,mts,ts}';
+const jestConfigGlob = '**/jest*.config*.{cjs,mjs,js,cts,mts,ts}';
+
+/** Standard pattern that Jest auto-discovers without needing --config. */
+const JEST_STANDARD_CONFIG_PATTERN = /^jest\.config\.[cm]?[jt]s$/;
+
+/** Builds a jest command string, auto-detecting whether --config is needed. */
+export function buildJestCommand(
+  args: string,
+  configFile?: string
+): string {
+  const needsConfig = configFile && !JEST_STANDARD_CONFIG_PATTERN.test(configFile);
+  const configFlag = needsConfig ? ` --config ${configFile}` : '';
+  const argsStr = args ? ` ${args}` : '';
+  return `jest${configFlag}${argsStr}`;
+}
 
 export const createNodesV2: CreateNodesV2<JestPluginOptions> = [
   jestConfigGlob,
@@ -95,6 +116,10 @@ export const createNodesV2: CreateNodesV2<JestPluginOptions> = [
     const { roots: projectRoots, configFiles: validConfigFiles } =
       configFiles.reduce(
         (acc, configFile) => {
+          const configBasename = basename(configFile);
+          if (!(options.config ? configBasename === options.config : JEST_STANDARD_CONFIG_PATTERN.test(configBasename))) {
+            return acc;
+          }
           const potentialRoot = dirname(configFile);
           if (
             checkIfConfigFileShouldBeProject(
@@ -219,8 +244,9 @@ async function buildJestTargets(
     module: 'commonjs',
     customConditions: null,
   });
+  const configBasename = basename(configFilePath);
   const target: TargetConfiguration = (targets[options.targetName] = {
-    command: 'jest',
+    command: buildJestCommand('', configBasename),
     options: {
       cwd: projectRoot,
       // Jest registers ts-node with module CJS https://github.com/SimenB/jest/blob/v29.6.4/packages/jest-config/src/readConfigFileAndSetRootDir.ts#L117-L119
@@ -303,7 +329,7 @@ async function buildJestTargets(
           const targetName = `${options.ciTargetName}--shard${index + 1}`;
           dependsOn.push(targetName);
           targets[targetName] = {
-            command: `jest --runTestsByPath ${shard.join(' ')}`,
+            command: buildJestCommand(`--runTestsByPath ${shard.join(' ')}`, configBasename),
             cache,
             inputs,
             outputs,
@@ -353,7 +379,7 @@ async function buildJestTargets(
       } else {
         // No sharding needed, run all tests in one target.
         targets[options.ciTargetName] = {
-          command: 'jest',
+          command: buildJestCommand('', configBasename),
           cache: true,
           inputs,
           outputs,
@@ -470,7 +496,7 @@ async function buildJestTargets(
           const targetName = `${options.ciTargetName}--${relativePath}`;
           dependsOn.push(targetName);
           targets[targetName] = {
-            command: `jest ${relativePath}`,
+            command: buildJestCommand(relativePath, configBasename),
             cache,
             inputs,
             outputs,
