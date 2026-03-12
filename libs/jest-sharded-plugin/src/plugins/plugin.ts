@@ -56,6 +56,13 @@ export interface JestPluginOptions {
    *  and test matcher instead of Jest's.
    */
   disableJestRuntime?: boolean;
+  /**
+   * The filename of a custom jest config to discover (e.g. 'jest.config-integration.js').
+   * When set, only files matching this exact name are processed.
+   * When absent, only standard jest.config.{ext} files are processed.
+   * Use multiple plugin registrations in nx.json for multiple custom configs.
+   */
+  customJestConfig?: string;
 }
 type JestPluginOptionsNormalized = JestPluginOptions & {
   targetName: string;
@@ -76,7 +83,22 @@ function writeTargetsToCache(
   writeJsonFile(cachePath, results);
 }
 
-const jestConfigGlob = '**/jest.config.{cjs,mjs,js,cts,mts,ts}';
+// Covers: jest.config.js, jest.config-app.js, jest.ds.config.js, jest.config.integration.ts
+const jestConfigGlob =
+  '**/jest{.*.config,.config,.config.*,.config-*}.{cjs,mjs,js,cts,mts,ts}';
+
+
+/**
+ * Resolve rootDir like Jest does: if explicitly set, resolve relative to config dir;
+ * otherwise default to config dir.
+ */
+function getConfigRootDir(rawConfig: any, absConfigFilePath: string): string {
+  const configDir = dirname(absConfigFilePath);
+  if (rawConfig.rootDir) {
+    return resolve(configDir, rawConfig.rootDir);
+  }
+  return configDir;
+}
 
 export const createNodesV2: CreateNodesV2<JestPluginOptions> = [
   jestConfigGlob,
@@ -95,6 +117,12 @@ export const createNodesV2: CreateNodesV2<JestPluginOptions> = [
     const { roots: projectRoots, configFiles: validConfigFiles } =
       configFiles.reduce(
         (acc, configFile) => {
+          const filename = configFile.split('/').pop()!;
+          if (options.customJestConfig) {
+            if (filename !== options.customJestConfig) return acc;
+          } else {
+            if (!/^jest\.config\.[cm]?[jt]s$/.test(filename)) return acc;
+          }
           const potentialRoot = dirname(configFile);
           if (
             checkIfConfigFileShouldBeProject(
@@ -211,6 +239,12 @@ async function buildJestTargets(
   if (require.cache[absConfigFilePath]) clearRequireCache();
   const rawConfig = await loadConfigFile(absConfigFilePath);
 
+  const targetName = options.targetName;
+  const ciTargetName = options.ciTargetName;
+  const configFilename = configFilePath.split('/').pop()!;
+  const jestCommand = options.customJestConfig ? `jest --config ${configFilename}` : 'jest';
+  const configRootDir = getConfigRootDir(rawConfig, absConfigFilePath);
+
   const targets: Record<string, TargetConfiguration> = {};
   const namedInputs = getNamedInputs(projectRoot, context);
 
@@ -219,8 +253,8 @@ async function buildJestTargets(
     module: 'commonjs',
     customConditions: null,
   });
-  const target: TargetConfiguration = (targets[options.targetName] = {
-    command: 'jest',
+  const target: TargetConfiguration = (targets[targetName] = {
+    command: jestCommand,
     options: {
       cwd: projectRoot,
       // Jest registers ts-node with module CJS https://github.com/SimenB/jest/blob/v29.6.4/packages/jest-config/src/readConfigFileAndSetRootDir.ts#L117-L119
@@ -256,7 +290,7 @@ async function buildJestTargets(
   let metadata: ProjectConfiguration['metadata'];
 
   const groupName =
-    options?.ciGroupName ?? deductGroupNameFromTarget(options?.ciTargetName);
+    options?.ciGroupName ?? deductGroupNameFromTarget(ciTargetName);
 
   if (disableJestRuntime) {
     const outputs = (target.outputs = getOutputs(
@@ -268,18 +302,19 @@ async function buildJestTargets(
       context
     ));
 
-    if (options?.ciTargetName) {
+    if (ciTargetName) {
       const testPaths = await getTestPaths(
         projectRoot,
         rawConfig,
         absConfigFilePath,
         context,
-        presetCache
+        presetCache,
+        configRootDir
       );
 
       const specIgnoreRegexes: undefined | RegExp[] =
         rawConfig.testPathIgnorePatterns?.map(
-          (p: string) => new RegExp(replaceRootDirInPath(projectRoot, p))
+          (p: string) => new RegExp(replaceRootDirInPath(configRootDir, p))
         );
       const normalizedTestPaths = testPaths.map((path) => normalizePath(
         relative(join(context.workspaceRoot, projectRoot), path)
@@ -300,10 +335,10 @@ async function buildJestTargets(
 
         for (const [index, shard] of shards.entries()) {
 
-          const targetName = `${options.ciTargetName}--shard${index + 1}`;
-          dependsOn.push(targetName);
-          targets[targetName] = {
-            command: `jest --runTestsByPath ${shard.join(' ')}`,
+          const shardTargetName = `${ciTargetName}--shard${index + 1}`;
+          dependsOn.push(shardTargetName);
+          targets[shardTargetName] = {
+            command: `${jestCommand} --runTestsByPath ${shard.join(' ')}`,
             cache,
             inputs,
             outputs,
@@ -324,11 +359,11 @@ async function buildJestTargets(
               },
             },
           };
-          targetGroup.push(targetName);
+          targetGroup.push(shardTargetName);
         }
 
         if (targetGroup.length > 0) {
-          targets[options.ciTargetName] = {
+          targets[ciTargetName] = {
             executor: 'nx:noop',
             cache: true,
             inputs,
@@ -337,7 +372,7 @@ async function buildJestTargets(
             metadata: {
               technologies: ['jest'],
               description: 'Run Jest Tests in CI',
-              nonAtomizedTarget: options.targetName,
+              nonAtomizedTarget: targetName,
               help: {
                 command: `${pmc.exec} jest --help`,
                 example: {
@@ -348,12 +383,12 @@ async function buildJestTargets(
               },
             },
           };
-          targetGroup.unshift(options.ciTargetName);
+          targetGroup.unshift(ciTargetName);
         }
       } else {
         // No sharding needed, run all tests in one target.
-        targets[options.ciTargetName] = {
-          command: 'jest',
+        targets[ciTargetName] = {
+          command: jestCommand,
           cache: true,
           inputs,
           outputs,
@@ -407,7 +442,7 @@ async function buildJestTargets(
       context
     ));
 
-    if (options?.ciTargetName) {
+    if (ciTargetName) {
       // nx-ignore-next-line
       const { default: Runtime } = requireJestUtil<
         typeof import('jest-runtime')
@@ -441,7 +476,7 @@ async function buildJestTargets(
         };
         const dependsOn: string[] = [];
 
-        targets[options.ciTargetName] = {
+        targets[ciTargetName] = {
           executor: 'nx:noop',
           cache: true,
           inputs,
@@ -450,7 +485,7 @@ async function buildJestTargets(
           metadata: {
             technologies: ['jest'],
             description: 'Run Jest Tests in CI',
-            nonAtomizedTarget: options.targetName,
+            nonAtomizedTarget: targetName,
             help: {
               command: `${pmc.exec} jest --help`,
               example: {
@@ -461,16 +496,16 @@ async function buildJestTargets(
             },
           },
         };
-        targetGroup.push(options.ciTargetName);
+        targetGroup.push(ciTargetName);
 
         for (const testPath of testPaths) {
           const relativePath = normalizePath(
             relative(join(context.workspaceRoot, projectRoot), testPath)
           );
-          const targetName = `${options.ciTargetName}--${relativePath}`;
-          dependsOn.push(targetName);
-          targets[targetName] = {
-            command: `jest ${relativePath}`,
+          const perFileTargetName = `${ciTargetName}--${relativePath}`;
+          dependsOn.push(perFileTargetName);
+          targets[perFileTargetName] = {
+            command: `${jestCommand} ${relativePath}`,
             cache,
             inputs,
             outputs,
@@ -491,8 +526,21 @@ async function buildJestTargets(
               },
             },
           };
-          targetGroup.push(targetName);
+          targetGroup.push(perFileTargetName);
         }
+      }
+    }
+  }
+
+  // Auto-add workspace-spanning inputs when rootDir extends above projectRoot
+  const absProjectRoot = resolve(context.workspaceRoot, projectRoot);
+  if (inputs && !configRootDir.startsWith(absProjectRoot)) {
+    const testMatch = rawConfig.testMatch as string[] | undefined;
+    if (testMatch) {
+      const rootDirRelative = relative(context.workspaceRoot, configRootDir);
+      for (const pattern of testMatch) {
+        const cleanPattern = pattern.replace('<rootDir>', '');
+        inputs.push(join('{workspaceRoot}', rootDirRelative, cleanPattern));
       }
     }
   }
@@ -701,7 +749,8 @@ async function getTestPaths(
   rawConfig: any,
   absConfigFilePath: string,
   context: CreateNodesContext,
-  presetCache: Record<string, unknown>
+  presetCache: Record<string, unknown>,
+  configRootDir: string
 ): Promise<string[]> {
   const testMatch = await getJestOption<string[]>(
     rawConfig,
@@ -718,7 +767,20 @@ async function getTestPaths(
         '**/__tests__/**/*.?([mc])[jt]s?(x)',
         '**/?(*.)+(spec|test).?([mc])[jt]s?(x)',
       ]
-    ).map((pattern) => join(projectRoot, pattern)),
+    ).map((pattern) => {
+      const isNeg = pattern.startsWith('!');
+      const raw = isNeg ? pattern.slice(1) : pattern;
+      let resolved: string;
+      if (raw.includes('<rootDir>')) {
+        resolved = relative(
+          context.workspaceRoot,
+          replaceRootDirInPath(configRootDir, raw)
+        );
+      } else {
+        resolved = join(projectRoot, raw);
+      }
+      return isNeg ? '!' + resolved : resolved;
+    }),
     []
   );
 

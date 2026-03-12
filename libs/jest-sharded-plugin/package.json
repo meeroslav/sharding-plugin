@@ -8,9 +8,9 @@
   "exports": {
     "./package.json": "./package.json",
     "./plugin": {
-      "types": "./src/plugins/plugin.ts",
-      "import": "./src/plugins/plugin.ts",
-      "default": "./src/plugins/plugin.ts"
+      "types": "./dist/plugins/plugin.d.ts",
+      "import": "./dist/plugins/plugin.js",
+      "default": "./dist/plugins/plugin.js"
     },
     ".": {
       "development": "./src/index.ts",
