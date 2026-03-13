@@ -83,9 +83,8 @@ function writeTargetsToCache(
   writeJsonFile(cachePath, results);
 }
 
-// Covers: jest.config.js, jest.config-app.js, jest.ds.config.js, jest.config.integration.ts
 const jestConfigGlob =
-  '**/jest{.*.config,.config,.config.*,.config-*}.{cjs,mjs,js,cts,mts,ts}';
+  '**/jest.config.{cjs,mjs,js,cts,mts,ts}';
 
 
 /**
@@ -114,15 +113,17 @@ export const createNodesV2: CreateNodesV2<JestPluginOptions> = [
     );
     options = normalizeOptions(options ?? {});
 
+    // When customJestConfig is set, discover those files separately since the
+    // static glob only covers standard jest.config.{ext} filenames.
+    const filesToProcess = options.customJestConfig
+      ? await globWithWorkspaceContext(context.workspaceRoot, [
+          `**/${options.customJestConfig}`,
+        ])
+      : configFiles;
+
     const { roots: projectRoots, configFiles: validConfigFiles } =
-      configFiles.reduce(
+      filesToProcess.reduce(
         (acc, configFile) => {
-          const filename = configFile.split('/').pop()!;
-          if (options.customJestConfig) {
-            if (filename !== options.customJestConfig) return acc;
-          } else {
-            if (!/^jest\.config\.[cm]?[jt]s$/.test(filename)) return acc;
-          }
           const potentialRoot = dirname(configFile);
           if (
             checkIfConfigFileShouldBeProject(
