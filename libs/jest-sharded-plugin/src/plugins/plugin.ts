@@ -764,6 +764,10 @@ async function getTestPaths(
         '**/__tests__/**/*.?([mc])[jt]s?(x)',
         '**/?(*.)+(spec|test).?([mc])[jt]s?(x)',
       ]
+    // Resolve <rootDir> tokens the same way Jest does (relative to the config's
+    // rootDir, not projectRoot). This is needed when configs set rootDir to a
+    // directory above the project (e.g. `rootDir: '../../'`) so that testMatch
+    // patterns like `<rootDir>/**/*.spec.ts` expand to the correct absolute path.
     ).map((pattern) => {
       const isNeg = pattern.startsWith('!');
       const raw = isNeg ? pattern.slice(1) : pattern;
