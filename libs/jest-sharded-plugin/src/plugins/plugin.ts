@@ -83,9 +83,7 @@ function writeTargetsToCache(
   writeJsonFile(cachePath, results);
 }
 
-const jestConfigGlob =
-  '**/jest.config.{cjs,mjs,js,cts,mts,ts}';
-
+const jestConfigGlob = '**/jest.config.{cjs,mjs,js,cts,mts,ts}';
 
 /**
  * Resolve rootDir like Jest does: if explicitly set, resolve relative to config dir;
@@ -240,8 +238,6 @@ async function buildJestTargets(
   if (require.cache[absConfigFilePath]) clearRequireCache();
   const rawConfig = await loadConfigFile(absConfigFilePath);
 
-  const targetName = options.targetName;
-  const ciTargetName = options.ciTargetName;
   const configFilename = configFilePath.split('/').pop()!;
   const jestCommand = options.customJestConfig ? `jest --config ${configFilename}` : 'jest';
   const configRootDir = getConfigRootDir(rawConfig, absConfigFilePath);
@@ -254,7 +250,7 @@ async function buildJestTargets(
     module: 'commonjs',
     customConditions: null,
   });
-  const target: TargetConfiguration = (targets[targetName] = {
+  const target: TargetConfiguration = (targets[options.targetName] = {
     command: jestCommand,
     options: {
       cwd: projectRoot,
@@ -291,7 +287,7 @@ async function buildJestTargets(
   let metadata: ProjectConfiguration['metadata'];
 
   const groupName =
-    options?.ciGroupName ?? deductGroupNameFromTarget(ciTargetName);
+    options?.ciGroupName ?? deductGroupNameFromTarget(options?.ciTargetName);
 
   if (disableJestRuntime) {
     const outputs = (target.outputs = getOutputs(
@@ -303,7 +299,7 @@ async function buildJestTargets(
       context
     ));
 
-    if (ciTargetName) {
+    if (options?.ciTargetName) {
       const testPaths = await getTestPaths(
         projectRoot,
         rawConfig,
@@ -336,9 +332,9 @@ async function buildJestTargets(
 
         for (const [index, shard] of shards.entries()) {
 
-          const shardTargetName = `${ciTargetName}--shard${index + 1}`;
-          dependsOn.push(shardTargetName);
-          targets[shardTargetName] = {
+          const targetName = `${options.ciTargetName}--shard${index + 1}`;
+          dependsOn.push(targetName);
+          targets[targetName] = {
             command: `${jestCommand} --runTestsByPath ${shard.join(' ')}`,
             cache,
             inputs,
@@ -360,11 +356,11 @@ async function buildJestTargets(
               },
             },
           };
-          targetGroup.push(shardTargetName);
+          targetGroup.push(targetName);
         }
 
         if (targetGroup.length > 0) {
-          targets[ciTargetName] = {
+          targets[options.ciTargetName] = {
             executor: 'nx:noop',
             cache: true,
             inputs,
@@ -373,7 +369,7 @@ async function buildJestTargets(
             metadata: {
               technologies: ['jest'],
               description: 'Run Jest Tests in CI',
-              nonAtomizedTarget: targetName,
+              nonAtomizedTarget: options.targetName,
               help: {
                 command: `${pmc.exec} jest --help`,
                 example: {
@@ -384,11 +380,11 @@ async function buildJestTargets(
               },
             },
           };
-          targetGroup.unshift(ciTargetName);
+          targetGroup.unshift(options.ciTargetName);
         }
       } else {
         // No sharding needed, run all tests in one target.
-        targets[ciTargetName] = {
+        targets[options.ciTargetName] = {
           command: jestCommand,
           cache: true,
           inputs,
@@ -443,7 +439,7 @@ async function buildJestTargets(
       context
     ));
 
-    if (ciTargetName) {
+    if (options?.ciTargetName) {
       // nx-ignore-next-line
       const { default: Runtime } = requireJestUtil<
         typeof import('jest-runtime')
@@ -477,7 +473,7 @@ async function buildJestTargets(
         };
         const dependsOn: string[] = [];
 
-        targets[ciTargetName] = {
+        targets[options.ciTargetName] = {
           executor: 'nx:noop',
           cache: true,
           inputs,
@@ -486,7 +482,7 @@ async function buildJestTargets(
           metadata: {
             technologies: ['jest'],
             description: 'Run Jest Tests in CI',
-            nonAtomizedTarget: targetName,
+            nonAtomizedTarget: options.targetName,
             help: {
               command: `${pmc.exec} jest --help`,
               example: {
@@ -497,15 +493,15 @@ async function buildJestTargets(
             },
           },
         };
-        targetGroup.push(ciTargetName);
+        targetGroup.push(options.ciTargetName);
 
         for (const testPath of testPaths) {
           const relativePath = normalizePath(
             relative(join(context.workspaceRoot, projectRoot), testPath)
           );
-          const perFileTargetName = `${ciTargetName}--${relativePath}`;
-          dependsOn.push(perFileTargetName);
-          targets[perFileTargetName] = {
+          const targetName = `${options.ciTargetName}--${relativePath}`;
+          dependsOn.push(targetName);
+          targets[targetName] = {
             command: `${jestCommand} ${relativePath}`,
             cache,
             inputs,
@@ -527,7 +523,7 @@ async function buildJestTargets(
               },
             },
           };
-          targetGroup.push(perFileTargetName);
+          targetGroup.push(targetName);
         }
       }
     }
